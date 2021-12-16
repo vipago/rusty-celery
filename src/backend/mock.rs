@@ -8,8 +8,6 @@ pub(crate) struct MockBackendBuilder;
 
 #[async_trait]
 impl BackendBuilder for MockBackendBuilder {
-    type Backend = MockBackend;
-
     fn new(_: &str) -> Self {
         unimplemented!()
     }
@@ -22,19 +20,17 @@ impl BackendBuilder for MockBackendBuilder {
         self
     }
 
-    async fn build(self, _: u32) -> Result<Self::Backend, BackendError> {
+    async fn build(self, _: u32) -> Result<Box<dyn Backend>, BackendError> {
         unimplemented!()
     }
 }
 
 #[async_trait]
 impl Backend for MockBackend {
-    type Builder = MockBackendBuilder;
-
     async fn store_result_inner<T: Send + Sync + Unpin + Serialize>(
         &self,
         _: &str,
-        _: Option<ResultMetadata<T>>,
+        _: Option<ResultMetadata>,
     ) -> Result<(), BackendError> {
         unimplemented!()
     }
@@ -42,7 +38,7 @@ impl Backend for MockBackend {
     async fn get_task_meta<T: Send + Sync + Unpin + DeserializeOwned>(
         &self,
         _: &str,
-    ) -> Result<super::ResultMetadata<T>, crate::prelude::BackendError> {
+    ) -> Result<super::ResultMetadata, crate::prelude::BackendError> {
         unimplemented!()
     }
 }

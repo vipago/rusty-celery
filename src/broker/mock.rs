@@ -1,6 +1,6 @@
 //! Defines mock broker that can be used to test other components that rely on a broker.
 
-use super::{Broker, BrokerBuilder};
+use super::{Broker, BrokerBuilder, DeliveryStream};
 use crate::error::{BrokerError, ProtocolError};
 use crate::protocol::{Message, TryDeserializeMessage};
 use async_trait::async_trait;
@@ -17,8 +17,6 @@ pub struct MockBrokerBuilder;
 
 #[async_trait]
 impl BrokerBuilder for MockBrokerBuilder {
-    type Broker = MockBroker;
-
     #[allow(unused)]
     fn new(broker_url: &str) -> Self {
         Self {}
@@ -40,7 +38,7 @@ impl BrokerBuilder for MockBrokerBuilder {
     }
 
     #[allow(unused)]
-    async fn build(&self, connection_timeout: u32) -> Result<Self::Broker, BrokerError> {
+    async fn build(&self, connection_timeout: u32) -> Result<dyn Broker, BrokerError> {
         Ok(MockBroker::new())
     }
 }
@@ -66,21 +64,16 @@ impl MockBroker {
 
 #[async_trait]
 impl Broker for MockBroker {
-    type Builder = MockBrokerBuilder;
-    type Delivery = Delivery;
-    type DeliveryError = ProtocolError;
-    type DeliveryStream = MockMessageStream;
-
     fn safe_url(&self) -> String {
         "mock://fake-url:8000/".into()
     }
 
     #[allow(unused)]
-    async fn consume<E: Fn(BrokerError) + Send + Sync + 'static>(
+    async fn consume(
         &self,
         queue: &str,
-        error_handler: Box<E>,
-    ) -> Result<(String, Self::DeliveryStream), BrokerError> {
+        error_handler: Box<dyn Fn(BrokerError) + Send + Sync + 'static>,
+    ) -> Result<(String, DeliveryStream), BrokerError> {
         unimplemented!();
     }
 
@@ -90,14 +83,14 @@ impl Broker for MockBroker {
     }
 
     #[allow(unused)]
-    async fn ack(&self, delivery: &Self::Delivery) -> Result<(), BrokerError> {
+    async fn ack(&self, delivery: dyn super::Delivery) -> Result<(), BrokerError> {
         Ok(())
     }
 
     #[allow(unused)]
     async fn retry(
         &self,
-        delivery: &Self::Delivery,
+        delivery: dyn super::Delivery,
         eta: Option<DateTime<Utc>>,
     ) -> Result<(), BrokerError> {
         Ok(())

@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use mongodb::{bson::doc, options::ClientOptions, Client, Database};
-use serde::{de::DeserializeOwned, Serialize};
 
 pub struct MongoBackendBuilder {
     backend_url: String,
@@ -19,8 +18,6 @@ pub struct MongoBackend {
 
 #[async_trait]
 impl BackendBuilder for MongoBackendBuilder {
-    type Backend = MongoBackend;
-
     /// Create new `MongoBackendBuilder`.
     fn new(backend_url: &str) -> Self {
         Self {
@@ -30,38 +27,36 @@ impl BackendBuilder for MongoBackendBuilder {
         }
     }
 
-    fn database(mut self, database: &str) -> Self {
+    fn database(self: Box<Self>, database: &str) -> Box<dyn BackendBuilder> {
         self.database = database.to_string();
         self
     }
 
-    fn taskmeta_collection(mut self, collection_name: &str) -> Self {
+    fn taskmeta_collection(self: Box<Self>, collection_name: &str) -> Box<dyn BackendBuilder> {
         self.taskmeta_collection = collection_name.to_string();
         self
     }
 
     /// Create new `MongoBackend`.
-    async fn build(self, connection_timeout: u32) -> Result<Self::Backend, BackendError> {
+    async fn build(self: Box<Self>, connection_timeout: u32) -> Result<Box<dyn Backend>, BackendError> {
         let mut client_options = ClientOptions::parse(&self.backend_url).await?;
         client_options.app_name = Some("celery".to_string());
         client_options.connect_timeout = Some(Duration::from_secs(connection_timeout as u64));
         let client = Client::with_options(client_options)?;
 
-        Ok(MongoBackend {
+        Ok(Box::new(MongoBackend {
             database: client.database(self.database.as_str()),
             collection_name: self.taskmeta_collection,
-        })
+        }))
     }
 }
 
 #[async_trait]
 impl Backend for MongoBackend {
-    type Builder = MongoBackendBuilder;
-
-    async fn store_result_inner<T: Send + Sync + Unpin + Serialize>(
+    async fn store_result_inner(
         &self,
         task_id: &str,
-        metadata: Option<ResultMetadata<T>>,
+        metadata: Option<ResultMetadata>,
     ) -> Result<(), BackendError> {
         let collection = self.database.collection(&self.collection_name);
         let filter = doc! { "task_id": task_id };
@@ -81,10 +76,10 @@ impl Backend for MongoBackend {
         Ok(())
     }
 
-    async fn get_task_meta<T: Send + Sync + Unpin + DeserializeOwned>(
+    async fn get_task_meta(
         &self,
         task_id: &str,
-    ) -> Result<ResultMetadata<T>, BackendError> {
+    ) -> Result<ResultMetadata, BackendError> {
         let collection = self.database.collection(&self.collection_name);
         let filter = doc! { "task_id": task_id };
         match collection.find_one(filter, None).await? {

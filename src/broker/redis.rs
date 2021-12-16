@@ -1,6 +1,6 @@
 //! Redis broker.
 #![allow(dead_code)]
-use super::{Broker, BrokerBuilder};
+use super::{Broker, BrokerBuilder, DeliveryStream};
 use crate::error::{BrokerError, ProtocolError};
 use crate::protocol::Delivery;
 use crate::protocol::Message;
@@ -36,8 +36,6 @@ pub struct RedisBrokerBuilder {
 
 #[async_trait]
 impl BrokerBuilder for RedisBrokerBuilder {
-    type Broker = RedisBroker;
-
     /// Create a new `BrokerBuilder`.
     fn new(broker_url: &str) -> Self {
         RedisBrokerBuilder {
@@ -51,26 +49,26 @@ impl BrokerBuilder for RedisBrokerBuilder {
     }
 
     /// Set the prefetch count.
-    fn prefetch_count(mut self, prefetch_count: u16) -> Self {
+    fn prefetch_count(&mut self, prefetch_count: u16) -> Box<dyn BrokerBuilder> {
         self.config.prefetch_count = prefetch_count;
         self
     }
 
     /// Declare a queue.
-    fn declare_queue(mut self, name: &str) -> Self {
+    fn declare_queue(&self, name: &str) -> Box<dyn BrokerBuilder> {
         self.config.queues.insert(name.into());
         self
     }
 
     /// Set the heartbeat.
-    fn heartbeat(mut self, heartbeat: Option<u16>) -> Self {
+    fn heartbeat(&mut self, heartbeat: Option<u16>) -> Box<dyn BrokerBuilder> {
         warn!("Setting heartbeat on redis broker has no effect on anything");
         self.config.heartbeat = heartbeat;
         self
     }
 
     /// Construct the `Broker` with the given configuration.
-    async fn build(&self, _connection_timeout: u32) -> Result<Self::Broker, BrokerError> {
+    async fn build(&self, _connection_timeout: u32) -> Result<Box<dyn Broker>, BrokerError> {
         let mut queues: HashSet<String> = HashSet::new();
         for queue_name in &self.config.queues {
             queues.insert(queue_name.into());
@@ -260,17 +258,6 @@ impl Stream for Consumer {
 
 #[async_trait]
 impl Broker for RedisBroker {
-    /// The builder type used to create the broker with a custom configuration.
-    type Builder = RedisBrokerBuilder;
-    type Delivery = (Channel, Delivery);
-    type DeliveryError = BrokerError;
-    type DeliveryStream = Consumer;
-
-    /// Returns a builder for creating a broker with a custom configuration.
-    fn builder(broker_url: &str) -> Self::Builder {
-        Self::Builder::new(broker_url)
-    }
-
     /// Consume messages from a queue.
     ///
     /// If the connection is successful, this should return a future stream of `Result`s where an `Ok`
@@ -278,11 +265,11 @@ impl Broker for RedisBroker {
     /// type that can be coerced into a [`Message`](protocol/struct.Message.html)
     /// and an `Err` value is a
     /// [`Self::DeliveryError`](trait.Broker.html#associatedtype.DeliveryError) type.
-    async fn consume<E: Fn(BrokerError) + Send + Sync + 'static>(
+    async fn consume(
         &self,
         queue: &str,
-        error_handler: Box<E>,
-    ) -> Result<(String, Self::DeliveryStream), BrokerError> {
+        error_handler: Box<dyn Fn(BrokerError) + Send + Sync + 'static>,
+    ) -> Result<(String, Box<dyn DeliveryStream>), BrokerError> {
         let consumer = Consumer {
             channel: Channel {
                 connection: self.manager.clone(),
@@ -308,7 +295,7 @@ impl Broker for RedisBroker {
     }
 
     /// Acknowledge a [`Delivery`](trait.Broker.html#associatedtype.Delivery) for deletion.
-    async fn ack(&self, delivery: &Self::Delivery) -> Result<(), BrokerError> {
+    async fn ack(&self, delivery: &dyn super::Delivery) -> Result<(), BrokerError> {
         self.pending_tasks.fetch_sub(1, Ordering::SeqCst);
         let (channel, delivery) = delivery;
         channel.remove_task(delivery).await?;
@@ -325,7 +312,7 @@ impl Broker for RedisBroker {
     /// Retry a delivery.
     async fn retry(
         &self,
-        delivery: &Self::Delivery,
+        delivery: &dyn super::Delivery,
         _eta: Option<DateTime<Utc>>,
     ) -> Result<(), BrokerError> {
         let (channel, delivery_msg) = delivery;

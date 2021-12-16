@@ -16,22 +16,18 @@ use crate::backend::Backend;
 /// and handling any errors, logging, and running the `on_failure` or `on_success` post-execution
 /// methods. It communicates its progress and the results back to the application through
 /// the `event_tx` channel and the return value of `Tracer::trace`, respectively.
-pub(super) struct Tracer<T, B>
+pub(super) struct Tracer<T>
 where
-    T: Task,
-    B: Backend
-{
+    T: Task {
     task: T,
     event_tx: UnboundedSender<TaskEvent>,
-    backend: Option<Arc<B>>
+    backend: Option<Arc<dyn Backend>>
 }
 
-impl<T, B> Tracer<T, B>
+impl<T> Tracer<T>
 where
-    T: Task,
-    B: Backend
-{
-    fn new(task: T, event_tx: UnboundedSender<TaskEvent>, backend: Option<Arc<B>>) -> Self {
+    T: Task {
+    fn new(task: T, event_tx: UnboundedSender<TaskEvent>, backend: Option<Arc<dyn Backend>>) -> Self {
         if let Some(eta) = task.request().eta {
             info!(
                 "Task {}[{}] received, ETA: {}",
@@ -48,10 +44,9 @@ where
 }
 
 #[async_trait]
-impl<T, B> TracerTrait for Tracer<T, B>
+impl<T> TracerTrait for Tracer<T>
 where
-    T: Task,
-    B: Backend {
+    T: Task {
     async fn trace(&mut self) -> Result<(), TraceError> {
         if self.is_expired() {
             warn!(
@@ -63,7 +58,7 @@ where
         }
 
         if let Some(backend) = &self.backend {
-            if let Err(e) = backend.mark_as_started::<T::Returns>(&self.task.request().id).await {
+            if let Err(e) = backend.mark_as_started(&self.task.request().id).await {
                 error!("Failed to save result: {}", e);
             }
         }
@@ -101,7 +96,8 @@ where
                 );
 
                 if let Some(backend) = &self.backend {
-                    if let Err(e) = backend.mark_as_done(&self.task.request().id, &returned, finished).await {
+                    let returned_serialized = serde_json::to_string(&returned);
+                    if let Err(e) = backend.mark_as_done(&self.task.request().id, &returned_serialized.unwrap(), finished).await {
                         error!("Failed to save result: {}", e);
                     }
                 }
@@ -157,7 +153,7 @@ where
                 };
 
                 if let Some(backend) = &self.backend {
-                    if let Err(backend_err) = backend.mark_as_failure::<T::Returns>(&self.task.request().id, e.clone(), finished).await {
+                    if let Err(backend_err) = backend.mark_as_failure(&self.task.request().id, e.clone(), finished).await {
                         error!("Failed to save result: {}", backend_err);
                     }
                 }
@@ -253,15 +249,14 @@ pub(super) type TraceBuilder<B> = Box<
         + 'static,
 >;
 
-pub(super) fn build_tracer<T, B>(
+pub(super) fn build_tracer<T>(
     message: Message,
     mut options: TaskOptions,
     event_tx: UnboundedSender<TaskEvent>,
     hostname: String,
-    backend: Option<Arc<B>>
+    backend: Option<Arc<dyn Backend>>
 ) -> TraceBuilderResult
-    where T: Task + Send + 'static,
-    B: Backend + 'static {
+    where T: Task + Send + 'static {
     // Build request object.
     let mut request = Request::<T>::try_from(message)?;
     request.hostname = Some(hostname);
@@ -275,5 +270,5 @@ pub(super) fn build_tracer<T, B>(
     // it.
     let task = T::from_request(request, options);
 
-    Ok(Box::new(Tracer::<T, B>::new(task, event_tx, backend)))
+    Ok(Box::new(Tracer::<T>::new(task, event_tx, backend)))
 }

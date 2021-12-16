@@ -1,4 +1,4 @@
-use serde::{de::DeserializeOwned, Serialize};
+use serde::de::DeserializeOwned;
 
 use crate::{backend::Backend, prelude::{BackendError, TaskError}};
 
@@ -7,13 +7,13 @@ use std::sync::Arc;
 use super::TaskState;
 
 /// An [`AsyncResult`] is a handle for the result of a task.
-pub struct AsyncResult<B: Backend> {
+pub struct AsyncResult {
     task_id: String,
-    backend: Option<Arc<B>>,
+    backend: Option<Arc<dyn Backend>>,
 }
 
-impl<B: Backend> AsyncResult<B> {
-    pub(crate) fn new(task_id: &str, backend: Option<Arc<B>>) -> Self {
+impl AsyncResult {
+    pub(crate) fn new(task_id: &str, backend: Option<Arc<dyn Backend>>) -> Self {
         Self {
             task_id: task_id.into(),
             backend
@@ -21,24 +21,24 @@ impl<B: Backend> AsyncResult<B> {
     }
 
     /// Returns true if task is failed
-    pub async fn failed<T: Send + Sync + Unpin + DeserializeOwned>(&self) -> Result<bool, BackendError> {
+    pub async fn failed(&self) -> Result<bool, BackendError> {
         self.throw_if_backend_not_set()?;
         let backend = self.backend.clone().unwrap();
-        Ok(backend.get_state::<T>(&self.task_id).await? == TaskState::Failure)
+        Ok(backend.get_state(&self.task_id).await? == TaskState::Failure)
     }
 
     /// Forget result of task
-    pub async fn forget<T: Send + Sync + Unpin + Serialize>(&self) -> Result<(), BackendError> {
+    pub async fn forget(&self) -> Result<(), BackendError> {
         self.throw_if_backend_not_set()?;
         let backend = self.backend.clone().unwrap();
-        Ok(backend.forget::<T>(&self.task_id).await?)
+        Ok(backend.forget(&self.task_id).await?)
     }
 
     /// Returns true if task is finished
-    pub async fn ready<T: Send + Sync + Unpin + DeserializeOwned>(&self) -> Result<bool, BackendError> {
+    pub async fn ready(&self) -> Result<bool, BackendError> {
         self.throw_if_backend_not_set()?;
         let backend = self.backend.clone().unwrap();
-        let state = backend.get_state::<T>(&self.task_id).await?;
+        let state = backend.get_state(&self.task_id).await?;
         Ok(state == TaskState::Success || state == TaskState::Failure)
     }
 
@@ -46,28 +46,32 @@ impl<B: Backend> AsyncResult<B> {
     pub async fn result<T: Send + Sync + Unpin + DeserializeOwned>(&self) -> Result<Option<T>, BackendError> {
         self.throw_if_backend_not_set()?;
         let backend = self.backend.clone().unwrap();
-        Ok(backend.get_result(&self.task_id).await?)
+        let result = backend.get_result(&self.task_id).await?;
+        if result.is_none() {
+            return Ok(None);
+        }
+        Ok(serde_json::from_str(&result.unwrap())?)
     }
 
     /// Get traceback of task
-    pub async fn traceback<T: Send + Sync + Unpin + DeserializeOwned>(&self) -> Result<Option<TaskError>, BackendError> {
+    pub async fn traceback(&self) -> Result<Option<TaskError>, BackendError> {
         self.throw_if_backend_not_set()?;
         let backend = self.backend.clone().unwrap();
-        Ok(backend.get_traceback::<T>(&self.task_id).await?)
+        Ok(backend.get_traceback(&self.task_id).await?)
     }
 
     /// Task's state
-    pub async fn state<T: Send + Sync + Unpin + DeserializeOwned>(&self) -> Result<TaskState, BackendError> {
+    pub async fn state(&self) -> Result<TaskState, BackendError> {
         self.throw_if_backend_not_set()?;
         let backend = self.backend.clone().unwrap();
-        Ok(backend.get_state::<T>(&self.task_id).await?)
+        Ok(backend.get_state(&self.task_id).await?)
     }
 
     /// Returns true if task is succeeded
-    pub async fn successful<T: Send + Sync + Unpin + DeserializeOwned>(&self) -> Result<bool, BackendError> {
+    pub async fn successful(&self) -> Result<bool, BackendError> {
         self.throw_if_backend_not_set()?;
         let backend = self.backend.clone().unwrap();
-        let state = backend.get_state::<T>(&self.task_id).await?;
+        let state = backend.get_state(&self.task_id).await?;
         Ok(state == TaskState::Success)
     }
 
