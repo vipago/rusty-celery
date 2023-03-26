@@ -9,9 +9,9 @@ macro_rules! __app_internal {
         [ $( $pattern:expr => $queue:expr ),* ],
         $( $x:ident = $y:expr, )*
     ) => {{
-        async fn _build_app(mut builder: $crate::CeleryBuilder::<<$broker_type as $crate::broker::Broker>::Builder, $crate::backend::empty::EmptyBackendBuilder>) ->
-            $crate::export::Result<$crate::export::Arc<$crate::Celery::<$broker_type, $crate::backend::empty::EmptyBackend>>> {
-            let celery: $crate::Celery<$broker_type, $crate::backend::empty::EmptyBackend> = builder.build().await?;
+        async fn _build_app(mut builder: $crate::CeleryBuilder) ->
+            $crate::export::Result<$crate::export::Arc<$crate::Celery>> {
+            let celery: $crate::Celery = builder.build().await?;
 
             $(
                 celery.register_task::<$t>().await?;
@@ -22,7 +22,7 @@ macro_rules! __app_internal {
 
         let broker_url = $broker_url;
 
-        let mut builder = $crate::Celery::<$broker_type, $crate::backend::empty::EmptyBackend>::builder("celery", &broker_url, None);
+        let mut builder = $crate::Celery::builder("celery", &broker_url, None);
 
         $(
             builder = builder.$x($y);
@@ -36,14 +36,14 @@ macro_rules! __app_internal {
     }};
     (
         $broker_type:ty { $broker_url:expr },
-        $backend_type:ty { $backend_url:expr },
+        $backend_url:expr,
         [ $( $t:ty ),* ],
         [ $( $pattern:expr => $queue:expr ),* ],
         $( $x:ident = $y:expr, )*
     ) => {{
-        async fn _build_app(mut builder: $crate::CeleryBuilder::<<$broker_type as $crate::broker::Broker>::Builder, <$backend_type as $crate::backend::Backend>::Builder>) ->
-            $crate::export::Result<$crate::export::Arc<$crate::Celery::<$broker_type, $backend_type>>> {
-            let celery: $crate::Celery<$broker_type, $backend_type> = builder.build().await?;
+        async fn _build_app(mut builder: $crate::CeleryBuilder) ->
+            $crate::export::Result<$crate::export::Arc<$crate::Celery>> {
+            let celery: $crate::Celery = builder.build().await?;
 
             $(
                 celery.register_task::<$t>().await?;
@@ -55,7 +55,7 @@ macro_rules! __app_internal {
         let broker_url = $broker_url;
         let backend_url = $backend_url;
 
-        let mut builder = $crate::Celery::<$broker_type, $backend_type>::builder("celery", &broker_url, Some(&backend_url));
+        let mut builder = $crate::Celery::builder("celery", &broker_url, Some(&backend_url));
 
         $(
             builder = builder.$x($y);
@@ -85,8 +85,8 @@ macro_rules! __beat_internal {
         [ $( $pattern:expr => $queue:expr ),* ],
         $( $x:ident = $y:expr, )*
     ) => {{
-        async fn _build_beat(mut builder: $crate::beat::BeatBuilder::<<$broker_type as $crate::broker::Broker>::Builder, $scheduler_backend_type>) ->
-            $crate::export::BeatResult<$crate::beat::Beat::<$broker_type, $scheduler_backend_type>> {
+        async fn _build_beat(mut builder: $crate::beat::BeatBuilder<$scheduler_backend_type>) ->
+            $crate::export::BeatResult<$crate::beat::Beat::<$scheduler_backend_type>> {
             let mut beat = builder.build().await?;
 
             $(
@@ -98,7 +98,7 @@ macro_rules! __beat_internal {
 
         let broker_url = $broker_url;
 
-        let mut builder = $crate::beat::Beat::<$broker_type, $scheduler_backend_type>::custom_builder("beat", &broker_url, $scheduler_backend);
+        let mut builder = $crate::beat::Beat::<$scheduler_backend_type>::custom_builder("beat", &broker_url, $scheduler_backend);
 
         $(
             builder = builder.$x($y);
@@ -198,14 +198,14 @@ macro_rules! app {
     };
     (
         broker = $broker_type:ty { $broker_url:expr },
-        backend = $backend_type:ty { $backend_url:expr },
+        backend = $backend_url:expr,
         tasks = [ $( $t:ty ),* $(,)? ],
         task_routes = [ $( $pattern:expr => $queue:expr ),* $(,)? ]
         $(, $x:ident = $y:expr )* $(,)?
     ) => {
         $crate::__app_internal!(
             $broker_type { $broker_url },
-            $backend_type { $backend_url },
+            $backend_url,
             [ $( $t ),* ],
             [ $( $pattern => $queue ),* ],
             $( $x = $y, )*

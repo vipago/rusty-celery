@@ -1,6 +1,6 @@
 //! Defines mock broker that can be used to test other components that rely on a broker.
 
-use super::{Broker, BrokerBuilder, DeliveryStream};
+use super::{Broker, BrokerBuilder, Delivery, DeliveryStream};
 use crate::error::{BrokerError, ProtocolError};
 use crate::protocol::{Message, TryDeserializeMessage};
 use async_trait::async_trait;
@@ -13,6 +13,9 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 use tokio::sync::RwLock;
 
+#[cfg(test)]
+use std::any::Any;
+
 pub struct MockBrokerBuilder;
 
 #[async_trait]
@@ -23,23 +26,23 @@ impl BrokerBuilder for MockBrokerBuilder {
     }
 
     #[allow(unused)]
-    fn prefetch_count(self, prefetch_count: u16) -> Self {
+    fn prefetch_count(self: Box<Self>, prefetch_count: u16) -> Box<dyn BrokerBuilder> {
         self
     }
 
     #[allow(unused)]
-    fn declare_queue(self, name: &str) -> Self {
+    fn declare_queue(self: Box<Self>, name: &str) -> Box<dyn BrokerBuilder> {
         self
     }
 
     #[allow(unused)]
-    fn heartbeat(self, heartbeat: Option<u16>) -> Self {
+    fn heartbeat(self: Box<Self>, heartbeat: Option<u16>) -> Box<dyn BrokerBuilder> {
         self
     }
 
     #[allow(unused)]
-    async fn build(&self, connection_timeout: u32) -> Result<dyn Broker, BrokerError> {
-        Ok(MockBroker::new())
+    async fn build(&self, connection_timeout: u32) -> Result<Box<dyn Broker>, BrokerError> {
+        Ok(Box::new(MockBroker::new()))
     }
 }
 
@@ -73,7 +76,7 @@ impl Broker for MockBroker {
         &self,
         queue: &str,
         error_handler: Box<dyn Fn(BrokerError) + Send + Sync + 'static>,
-    ) -> Result<(String, DeliveryStream), BrokerError> {
+    ) -> Result<(String, Box<dyn DeliveryStream>), BrokerError> {
         unimplemented!();
     }
 
@@ -83,14 +86,14 @@ impl Broker for MockBroker {
     }
 
     #[allow(unused)]
-    async fn ack(&self, delivery: dyn super::Delivery) -> Result<(), BrokerError> {
+    async fn ack(&self, delivery: &dyn Delivery) -> Result<(), BrokerError> {
         Ok(())
     }
 
     #[allow(unused)]
     async fn retry(
         &self,
-        delivery: dyn super::Delivery,
+        delivery: &dyn Delivery,
         eta: Option<DateTime<Utc>>,
     ) -> Result<(), BrokerError> {
         Ok(())
@@ -121,12 +124,17 @@ impl Broker for MockBroker {
     async fn reconnect(&self, connection_timeout: u32) -> Result<(), BrokerError> {
         Ok(())
     }
+
+    #[cfg(test)]
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct Delivery;
+pub struct MockDelivery;
 
-impl TryDeserializeMessage for Delivery {
+impl TryDeserializeMessage for MockDelivery {
     fn try_deserialize_message(&self) -> Result<Message, ProtocolError> {
         unimplemented!();
     }
@@ -135,7 +143,7 @@ impl TryDeserializeMessage for Delivery {
 pub struct MockMessageStream;
 
 impl Stream for MockMessageStream {
-    type Item = Result<Delivery, ProtocolError>;
+    type Item = Result<MockDelivery, ProtocolError>;
 
     #[allow(unused)]
     fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {

@@ -62,12 +62,6 @@ pub trait Task: Send + Sync + std::marker::Sized {
 
     /// The parameters of the task.
     type Params: Clone + Send + Sync + Serialize + for<'de> Deserialize<'de>;
-
-    /// The return type of the task.
-    #[cfg(not(feature = "backend_mongo"))]
-    type Returns: Send + Sync + std::fmt::Debug;
-    #[cfg(feature = "backend_mongo")]
-    /// The return type of the task.
     type Returns: Send + Sync + Unpin + std::fmt::Debug + Serialize;
 
     /// Used to initialize a task instance from a request.

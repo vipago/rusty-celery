@@ -19,6 +19,7 @@ use tokio_stream::StreamMap;
 
 mod trace;
 
+use crate::backend::redis::RedisBackendBuilder;
 use crate::broker::{Delivery, RedisBrokerBuilder};
 use crate::error::{BrokerError, CeleryError, TraceError};
 use crate::protocol::{Message, MessageContentType};
@@ -64,8 +65,7 @@ impl CeleryBuilder {
         let backend_builder: Option<Box<dyn BackendBuilder>> = match backend_url {
             None => None,
             Some(url) => match Url::parse(url).unwrap().scheme() {
-                #[cfg(feature = "backend_mongo")]
-                "mongodb" => Some(Box::new(MongoBackendBuilder::new(url))),
+                "redis" => Some(Box::new(RedisBackendBuilder::new(url))),
                 _ => panic!("Unsupported backend"),
             }
         };
@@ -212,23 +212,6 @@ impl CeleryBuilder {
         self
     }
 
-    /// Set backend database name.
-    pub fn backend_database(mut self, database: &str) -> Self {
-        self.config.backend_builder = Some(self.config.backend_builder.unwrap().database(database));
-        self
-    }
-
-    /// Set backend task meta collection name.
-    pub fn backend_taskmeta_collection(mut self, collection_name: &str) -> Self {
-        self.config.backend_builder = Some(
-            self.config
-                .backend_builder
-                .unwrap()
-                .taskmeta_collection(collection_name),
-        );
-        self
-    }
-
     /// Construct a [`Celery`] app with the current configuration.
     pub async fn build(self) -> Result<Celery, CeleryError> {
         // Declare default queue to broker.
@@ -255,7 +238,7 @@ impl CeleryBuilder {
         .await?;
 
         let backend = match backend_builder {
-            Some(builder) => Some(Arc::from(builder.build(10).await?)),
+            Some(builder) => Some(Arc::from(builder.build().await?)),
             None => None,
         };
 

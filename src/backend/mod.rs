@@ -1,8 +1,7 @@
-#[cfg(feature = "backend_mongo")]
-pub mod mongo;
-
 #[cfg(test)]
 pub(crate) mod mock;
+
+pub(crate) mod redis;
 
 use crate::task::TaskState;
 use crate::{error::BackendError, prelude::TaskError};
@@ -153,13 +152,6 @@ pub struct ResultMetadata {
 pub trait BackendBuilder {
     /// Create a new `BackendBuilder`.
     fn new(broker_url: &str) -> Self where Self: Sized;
-
-    /// Set database name.
-    fn database(self: Box<Self>, database: &str) -> Box<dyn BackendBuilder>;
-
-    /// Set database collection name.
-    fn taskmeta_collection(self: Box<Self>, collection_name: &str) -> Box<dyn BackendBuilder>;
-
     /// Construct the `Backend` with the given configuration.
-    async fn build(self: Box<Self>, connection_timeout: u32) -> Result<Box<dyn Backend>, BackendError>;
+    async fn build(self: Box<Self>) -> Result<Box<dyn Backend>, BackendError>;
 }

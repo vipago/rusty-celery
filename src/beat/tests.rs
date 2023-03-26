@@ -25,7 +25,7 @@ async fn test_task_with_delta_schedule() {
     // Configure a dummy queue for the tasks.
     let task_routes = vec![Rule::new("dummy_*", "dummy_queue").unwrap()];
 
-    let mut beat: Beat<MockBroker, LocalSchedulerBackend> = Beat {
+    let mut beat: Beat = Beat {
         name: "dummy_beat".to_string(),
         scheduler: Scheduler::new(dummy_broker),
         scheduler_backend: LocalSchedulerBackend::new(),

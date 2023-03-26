@@ -6,6 +6,7 @@ use celery::prelude::*;
 async fn test_basic_use() {
     let _app = celery::app!(
         broker = AMQPBroker { std::env::var("AMQP_ADDR").unwrap_or_else(|_| "amqp://localhost:5672//".into()) },
+        backend = std::env::var("REDIS_ADDR").unwrap_or_else(|_| "redis://localhost".into()),
         tasks = [],
         task_routes = []
     )
@@ -66,7 +67,6 @@ async fn test_with_options_and_trailing_comma() {
 async fn test_backend() {
     let _app = celery::app!(
         broker = AMQPBroker { std::env::var("AMQP_ADDR").unwrap_or_else(|_| "amqp://localhost:5672//".into()) },
-        backend = MongoBackend { std::env::var("MONGO_ADDR").unwrap_or_else(|_| "mongodb://localhost:27017/".into()) },
         tasks = [],
         task_routes = []
     )

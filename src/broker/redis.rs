@@ -1,6 +1,6 @@
 //! Redis broker.
 #![allow(dead_code)]
-use super::{Broker, BrokerBuilder, DeliveryStream};
+use super::{Broker, BrokerBuilder, DeliveryError, DeliveryStream};
 use crate::error::{BrokerError, ProtocolError};
 use crate::protocol::Delivery;
 use crate::protocol::Message;
@@ -22,6 +22,9 @@ use std::task::{Poll, Waker};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
 use uuid::Uuid;
+
+#[cfg(test)]
+use std::any::Any;
 
 struct Config {
     broker_url: String,
@@ -49,19 +52,19 @@ impl BrokerBuilder for RedisBrokerBuilder {
     }
 
     /// Set the prefetch count.
-    fn prefetch_count(&mut self, prefetch_count: u16) -> Box<dyn BrokerBuilder> {
+    fn prefetch_count(mut self: Box<Self>, prefetch_count: u16) -> Box<dyn BrokerBuilder> {
         self.config.prefetch_count = prefetch_count;
         self
     }
 
     /// Declare a queue.
-    fn declare_queue(&self, name: &str) -> Box<dyn BrokerBuilder> {
+    fn declare_queue(mut self: Box<Self>, name: &str) -> Box<dyn BrokerBuilder> {
         self.config.queues.insert(name.into());
         self
     }
 
     /// Set the heartbeat.
-    fn heartbeat(&mut self, heartbeat: Option<u16>) -> Box<dyn BrokerBuilder> {
+    fn heartbeat(mut self: Box<Self>, heartbeat: Option<u16>) -> Box<dyn BrokerBuilder> {
         warn!("Setting heartbeat on redis broker has no effect on anything");
         self.config.heartbeat = heartbeat;
         self
@@ -85,7 +88,7 @@ impl BrokerBuilder for RedisBrokerBuilder {
         println!("Creating mpsc channel");
         let (tx, rx) = channel(1);
         println!("Creating broker");
-        Ok(RedisBroker {
+        Ok(Box::new(RedisBroker {
             uri: self.config.broker_url.clone(),
             queues,
             client,
@@ -94,7 +97,7 @@ impl BrokerBuilder for RedisBrokerBuilder {
             pending_tasks: Arc::new(AtomicU16::new(0)),
             waker_rx: Mutex::new(rx),
             waker_tx: tx,
-        })
+        }))
     }
 }
 
@@ -210,6 +213,29 @@ pub struct Consumer {
     prefetch_count: Arc<AtomicU16>,
 }
 
+impl DeliveryStream for Consumer {}
+
+#[async_trait]
+impl super::Delivery for (Channel, Delivery) {
+    async fn resend(
+        &self,
+        _broker: &dyn Broker,
+        _eta: Option<DateTime<Utc>>,
+    ) -> Result<(), BrokerError> {
+        self.0.resend_task(&self.1).await?;
+        Ok(())
+    }
+
+    async fn remove(&self) -> Result<(), BrokerError> {
+        self.0.remove_task(&self.1).await?;
+        Ok(())
+    }
+
+    async fn ack(&self) -> Result<(), BrokerError> {
+        todo!()
+    }
+}
+
 impl TryDeserializeMessage for (Channel, Delivery) {
     fn try_deserialize_message(&self) -> Result<Message, ProtocolError> {
         self.1.try_deserialize_message()
@@ -217,7 +243,7 @@ impl TryDeserializeMessage for (Channel, Delivery) {
 }
 
 impl Stream for Consumer {
-    type Item = Result<(Channel, Delivery), BrokerError>;
+    type Item = Result<Box<dyn super::Delivery>, Box<dyn DeliveryError>>;
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -241,7 +267,7 @@ impl Stream for Consumer {
             match item {
                 Ok(item) => {
                     self.pending_tasks.fetch_add(1, Ordering::SeqCst);
-                    Poll::Ready(Some(Ok((self.channel.clone(), item))))
+                    Poll::Ready(Some(Ok(Box::new((self.channel.clone(), item)))))
                 }
                 Err(err) => {
                     (self.error_handler)(err);
@@ -284,10 +310,10 @@ impl Broker for RedisBroker {
 
         // Create unique consumer tag.
         let mut buffer = Uuid::encode_buffer();
-        let uuid = Uuid::new_v4().to_hyphenated().encode_lower(&mut buffer);
+        let uuid = Uuid::new_v4().hyphenated().encode_lower(&mut buffer);
         let consumer_tag = uuid.to_owned();
 
-        Ok((consumer_tag, consumer))
+        Ok((consumer_tag, Box::new(consumer)))
     }
 
     async fn cancel(&self, _consumer_tag: &str) -> Result<(), BrokerError> {
@@ -297,8 +323,7 @@ impl Broker for RedisBroker {
     /// Acknowledge a [`Delivery`](trait.Broker.html#associatedtype.Delivery) for deletion.
     async fn ack(&self, delivery: &dyn super::Delivery) -> Result<(), BrokerError> {
         self.pending_tasks.fetch_sub(1, Ordering::SeqCst);
-        let (channel, delivery) = delivery;
-        channel.remove_task(delivery).await?;
+        delivery.remove().await?;
         let mut waker_rx = self.waker_rx.lock().await;
         // work around for try_recv. We do not care if a waker is available after this check.
         let dummy_waker = futures::task::noop_waker_ref();
@@ -313,10 +338,9 @@ impl Broker for RedisBroker {
     async fn retry(
         &self,
         delivery: &dyn super::Delivery,
-        _eta: Option<DateTime<Utc>>,
+        eta: Option<DateTime<Utc>>,
     ) -> Result<(), BrokerError> {
-        let (channel, delivery_msg) = delivery;
-        channel.resend_task(delivery_msg).await?;
+        delivery.resend(self, eta).await?;
         // self.ack(delivery).await?;
         Ok(())
     }
@@ -403,5 +427,10 @@ impl Broker for RedisBroker {
                 }
             }
         }
+    }
+
+    #[cfg(test)]
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
     }
 }

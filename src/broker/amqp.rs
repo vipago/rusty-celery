@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
+use futures::Stream;
 use lapin::message::Delivery;
 use lapin::options::{
     BasicAckOptions, BasicCancelOptions, BasicConsumeOptions, BasicPublishOptions, BasicQosOptions,
@@ -13,12 +14,68 @@ use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, Queue};
 use log::debug;
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::task::Poll;
 use tokio::sync::{Mutex, RwLock};
-use tokio_amqp::LapinTokioExt;
 
-use super::{Broker, BrokerBuilder, DeliveryStream};
+use super::{Broker, BrokerBuilder, DeliveryError, DeliveryStream};
 use crate::error::{BrokerError, ProtocolError};
 use crate::protocol::{Message, MessageHeaders, MessageProperties, TryDeserializeMessage};
+use tokio_executor_trait::Tokio as TokioExecutor;
+
+#[cfg(test)]
+use std::any::Any;
+
+struct Consumer {
+    wrapped: lapin::Consumer,
+}
+impl DeliveryStream for Consumer {}
+impl DeliveryError for lapin::Error {}
+
+#[async_trait]
+impl super::Delivery for Delivery {
+    async fn resend(
+        &self,
+        broker: &dyn Broker,
+        eta: Option<DateTime<Utc>>,
+    ) -> Result<(), BrokerError> {
+        let mut message = self.try_deserialize_message()?;
+        message.headers.eta = eta;
+        // Increment the number of retries.
+        message.headers.retries = Some(message.headers.retries.map_or(1, |retry| retry + 1));
+        broker.send(&message, self.routing_key.as_str()).await
+    }
+    async fn remove(&self) -> Result<(), BrokerError> {
+        todo!()
+    }
+    async fn ack(&self) -> Result<(), BrokerError> {
+        lapin::acker::Acker::ack(self, BasicAckOptions::default()).await?;
+        Ok(())
+    }
+}
+
+impl Stream for Consumer {
+    type Item = Result<Box<dyn super::Delivery>, Box<dyn DeliveryError>>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::option::Option<<Self as futures::Stream>::Item>> {
+        use futures_lite::stream::StreamExt;
+
+        if let Poll::Ready(ret) = self.wrapped.poll_next(cx) {
+            if let Some(result) = ret {
+                match result {
+                    Ok(x) => Poll::Ready(Some(Ok(Box::new(x)))),
+                    Err(x) => Poll::Ready(Some(Err(Box::new(x)))),
+                }
+            } else {
+                Poll::Ready(None)
+            }
+        } else {
+            Poll::Pending
+        }
+    }
+}
 
 struct Config {
     broker_url: String,
@@ -30,6 +87,20 @@ struct Config {
 /// Builds an [`AMQPBroker`] with a custom configuration.
 pub struct AMQPBrokerBuilder {
     config: Config,
+}
+
+fn create_base_connection_properties() -> ConnectionProperties {
+    // See https://github.com/amqp-rs/reactor-trait/issues/1#issuecomment-1033473197
+    ConnectionProperties::default().with_executor(TokioExecutor::current())
+}
+
+#[cfg(unix)]
+fn create_connection_properties() -> ConnectionProperties {
+    create_base_connection_properties().with_reactor(tokio_reactor_trait::Tokio)
+}
+#[cfg(windows)]
+fn create_connection_properties() -> ConnectionProperties {
+    create_base_connection_properties()
 }
 
 #[async_trait]
@@ -48,13 +119,13 @@ impl BrokerBuilder for AMQPBrokerBuilder {
 
     /// Set the worker [prefetch
     /// count](https://www.rabbitmq.com/confirms.html#channel-qos-prefetch).
-    fn prefetch_count(self: Box<Self>, prefetch_count: u16) -> Box<dyn BrokerBuilder> {
+    fn prefetch_count(mut self: Box<Self>, prefetch_count: u16) -> Box<dyn BrokerBuilder> {
         self.config.prefetch_count = prefetch_count;
         self
     }
 
     /// Declare a queue.
-    fn declare_queue(self: Box<Self>, name: &str) -> Box<dyn BrokerBuilder> {
+    fn declare_queue(mut self: Box<Self>, name: &str) -> Box<dyn BrokerBuilder> {
         self.config.queues.insert(
             name.into(),
             QueueDeclareOptions {
@@ -69,7 +140,7 @@ impl BrokerBuilder for AMQPBrokerBuilder {
     }
 
     /// Set the heartbeat.
-    fn heartbeat(self: Box<Self>, heartbeat: Option<u16>) -> Box<dyn BrokerBuilder> {
+    fn heartbeat(mut self: Box<Self>, heartbeat: Option<u16>) -> Box<dyn BrokerBuilder> {
         self.config.heartbeat = heartbeat;
         self
     }
@@ -81,9 +152,8 @@ impl BrokerBuilder for AMQPBrokerBuilder {
         uri.query.heartbeat = self.config.heartbeat;
         uri.query.connection_timeout = Some((connection_timeout as u64) * 1000);
 
-        let conn =
-            Connection::connect_uri(uri.clone(), ConnectionProperties::default().with_tokio())
-                .await?;
+        let conn = Connection::connect_uri(uri.clone(), create_connection_properties()).await?;
+
         let consume_channel = conn.create_channel().await?;
         let produce_channel = conn.create_channel().await?;
 
@@ -181,18 +251,20 @@ impl Broker for AMQPBroker {
         let queue = queues
             .get(queue)
             .ok_or_else::<BrokerError, _>(|| BrokerError::UnknownQueue(queue.into()))?;
-        let consumer = self
-            .consume_channel
-            .read()
-            .await
-            .basic_consume(
-                queue.name().as_str(),
-                "",
-                BasicConsumeOptions::default(),
-                FieldTable::default(),
-            )
-            .await?;
-        Ok((consumer.tag().to_string(), Box::new(consumer)))
+        let consumer = Consumer {
+            wrapped: self
+                .consume_channel
+                .read()
+                .await
+                .basic_consume(
+                    queue.name().as_str(),
+                    "",
+                    BasicConsumeOptions::default(),
+                    FieldTable::default(),
+                )
+                .await?,
+        };
+        Ok((consumer.wrapped.tag().to_string(), Box::new(consumer)))
     }
 
     async fn cancel(&self, consumer_tag: &str) -> Result<(), BrokerError> {
@@ -204,11 +276,7 @@ impl Broker for AMQPBroker {
     }
 
     async fn ack(&self, delivery: &dyn super::Delivery) -> Result<(), BrokerError> {
-        delivery
-            .1
-            .ack(BasicAckOptions::default())
-            .await
-            .map_err(|e| e.into())
+        delivery.ack().await
     }
 
     async fn retry(
@@ -216,41 +284,7 @@ impl Broker for AMQPBroker {
         delivery: &dyn super::Delivery,
         eta: Option<DateTime<Utc>>,
     ) -> Result<(), BrokerError> {
-        let mut headers = delivery
-            .1
-            .properties
-            .headers()
-            .clone()
-            .unwrap_or_else(FieldTable::default);
-
-        // Increment the number of retries.
-        let retries = match get_header_u32(&headers, "retries") {
-            Some(retries) => retries + 1,
-            None => 1,
-        };
-        headers.insert("retries".into(), AMQPValue::LongUInt(retries));
-
-        // Set the ETA.
-        if let Some(dt) = eta {
-            headers.insert(
-                "eta".into(),
-                AMQPValue::LongString(dt.to_rfc3339_opts(SecondsFormat::Millis, false).into()),
-            );
-        };
-
-        let properties = delivery.1.properties.clone().with_headers(headers);
-        self.produce_channel
-            .read()
-            .await
-            .basic_publish(
-                "",
-                delivery.1.routing_key.as_str(),
-                BasicPublishOptions::default(),
-                delivery.1.data.clone(),
-                properties,
-            )
-            .await?;
-
+        delivery.resend(self, eta).await?;
         Ok(())
     }
 
@@ -264,7 +298,7 @@ impl Broker for AMQPBroker {
                 "",
                 queue,
                 BasicPublishOptions::default(),
-                message.raw_body.clone(),
+                &message.raw_body.clone()[..],
                 properties,
             )
             .await?;
@@ -333,8 +367,7 @@ impl Broker for AMQPBroker {
             debug!("Attempting to reconnect to broker");
             let mut uri = self.uri.clone();
             uri.query.connection_timeout = Some(connection_timeout as u64);
-            *conn =
-                Connection::connect_uri(uri, ConnectionProperties::default().with_tokio()).await?;
+            *conn = Connection::connect_uri(uri, create_connection_properties()).await?;
 
             let mut consume_channel = self.consume_channel.write().await;
             let mut produce_channel = self.produce_channel.write().await;
@@ -353,6 +386,11 @@ impl Broker for AMQPBroker {
         }
 
         Ok(())
+    }
+
+    #[cfg(test)]
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
     }
 }
 
@@ -568,7 +606,7 @@ fn amqp_value_to_u32(v: &AMQPValue) -> Option<u32> {
         AMQPValue::ShortInt(n) => Some(*n as u32),
         AMQPValue::ShortUInt(n) => Some(*n as u32),
         AMQPValue::LongInt(n) => Some(*n as u32),
-        AMQPValue::LongUInt(n) => Some(*n as u32),
+        AMQPValue::LongUInt(n) => Some(*n),
         AMQPValue::LongLongInt(n) => Some(*n as u32),
         _ => None,
     }

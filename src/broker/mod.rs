@@ -20,15 +20,29 @@ pub use amqp::{AMQPBroker, AMQPBrokerBuilder};
 
 #[cfg(test)]
 pub mod mock;
+#[cfg(test)]
+use std::any::Any;
 
 /// The type representing a successful delivery.
-pub(crate) trait Delivery: TryDeserializeMessage + Send + Sync + std::fmt::Debug {}
+#[async_trait]
+pub trait Delivery: TryDeserializeMessage + Send + Sync + std::fmt::Debug {
+    async fn resend(
+        &self,
+        broker: &dyn Broker,
+        eta: Option<DateTime<Utc>>,
+    ) -> Result<(), BrokerError>;
+    async fn remove(&self) -> Result<(), BrokerError>;
+    async fn ack(&self) -> Result<(), BrokerError>;
+}
 
 /// The error type of an unsuccessful delivery.
-pub(crate) trait DeliveryError: std::fmt::Display + Send + Sync {}
+pub trait DeliveryError: std::fmt::Display + Send + Sync {}
 
 /// The stream type that the [`Celery`](crate::Celery) app will consume deliveries from.
-pub(crate) trait DeliveryStream: Stream<Item = Result<Box<dyn Delivery>, Box<dyn DeliveryError>>> {}
+pub trait DeliveryStream:
+    Stream<Item = Result<Box<dyn Delivery>, Box<dyn DeliveryError>>> + Unpin
+{
+}
 
 /// A message [`Broker`] is used as the transport for producing or consuming tasks.
 #[async_trait]
@@ -80,13 +94,18 @@ pub trait Broker: Send + Sync {
 
     /// Try reconnecting in the event of some sort of connection error.
     async fn reconnect(&self, connection_timeout: u32) -> Result<(), BrokerError>;
+
+    #[cfg(test)]
+    fn into_any(self: Box<Self>) -> Box<dyn Any>;
 }
 
 /// A [`BrokerBuilder`] is used to create a type of broker with a custom configuration.
 #[async_trait]
-pub trait BrokerBuilder {
+pub trait BrokerBuilder: Send + Sync {
     /// Create a new `BrokerBuilder`.
-    fn new(broker_url: &str) -> Self where Self: Sized;
+    fn new(broker_url: &str) -> Self
+    where
+        Self: Sized;
 
     /// Set the prefetch count.
     fn prefetch_count(self: Box<Self>, prefetch_count: u16) -> Box<dyn BrokerBuilder>;
@@ -99,6 +118,16 @@ pub trait BrokerBuilder {
 
     /// Construct the `Broker` with the given configuration.
     async fn build(&self, connection_timeout: u32) -> Result<Box<dyn Broker>, BrokerError>;
+}
+
+pub(crate) fn broker_builder_from_url(broker_url: &str) -> Box<dyn BrokerBuilder> {
+    match broker_url.split_once("://") {
+        Some(("amqp", _)) => Box::new(AMQPBrokerBuilder::new(broker_url)),
+        Some(("redis", _)) => Box::new(RedisBrokerBuilder::new(broker_url)),
+        #[cfg(test)]
+        Some(("mock", _)) => Box::new(mock::MockBrokerBuilder::new(broker_url)),
+        _ => panic!("Unsupported broker"),
+    }
 }
 
 // TODO: this function consumes the broker_builder, which results in a not so ergonomic API.
@@ -150,8 +179,8 @@ pub(crate) async fn build_and_connect(
         };
     }
 
-    Ok(broker.ok_or_else(|| {
+    broker.ok_or_else(|| {
         error!("Failed to establish connection with broker");
         BrokerError::NotConnected
-    })?)
+    })
 }

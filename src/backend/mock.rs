@@ -12,22 +12,15 @@ impl BackendBuilder for MockBackendBuilder {
         unimplemented!()
     }
 
-    fn database(self, _: &str) -> Self {
-        self
-    }
 
-    fn taskmeta_collection(self, _: &str) -> Self {
-        self
-    }
-
-    async fn build(self, _: u32) -> Result<Box<dyn Backend>, BackendError> {
+    async fn build(self: Box<Self>) -> Result<Box<dyn Backend>, BackendError> {
         unimplemented!()
     }
 }
 
 #[async_trait]
 impl Backend for MockBackend {
-    async fn store_result_inner<T: Send + Sync + Unpin + Serialize>(
+    async fn store_result_inner(
         &self,
         _: &str,
         _: Option<ResultMetadata>,
@@ -35,7 +28,7 @@ impl Backend for MockBackend {
         unimplemented!()
     }
 
-    async fn get_task_meta<T: Send + Sync + Unpin + DeserializeOwned>(
+    async fn get_task_meta(
         &self,
         _: &str,
     ) -> Result<super::ResultMetadata, crate::prelude::BackendError> {
