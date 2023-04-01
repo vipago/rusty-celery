@@ -49,10 +49,11 @@ impl Backend for RedisBackend {
         task_id: &str,
     ) -> Result<ResultMetadata, BackendError> {
         let mut connection = self.0.get_async_connection().await?;
-        if !connection.exists(task_id).await? {
+        let key = format!("task:{task_id}");
+        if !connection.exists(&key).await? {
             return Err(BackendError::DocumentNotFound(task_id.to_string()));
         }
-        let meta: String = connection.get(format!("task:{task_id}")).await?;
+        let meta: String = connection.get(&key).await?;
         let meta: ResultMetadata = serde_json::from_str(&meta)?;
         Ok(meta)
     }
