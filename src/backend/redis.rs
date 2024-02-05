@@ -1,3 +1,7 @@
+use std::time::Duration;
+
+use crate::task::TaskState;
+
 use super::{Backend, BackendBuilder, BackendError, ResultMetadata};
 use async_trait::async_trait;
 use redis::Client;
@@ -56,5 +60,19 @@ impl Backend for RedisBackend {
         let meta: String = connection.get(&key).await?;
         let meta: ResultMetadata = serde_json::from_str(&meta)?;
         Ok(meta)
+    }
+
+    async fn wait_for_task_state(&self, task_id: &str, state: TaskState) -> Result<(), BackendError> {
+        let mut connection = self.0.get_async_connection().await?;
+        let key = format!("task:{task_id}");
+        loop {
+            let result: String = connection.get(&key).await?;
+            let result: ResultMetadata = serde_json::from_str(result.as_str())?;
+            if result.status == state {
+                 break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        Ok(())
     }
 }

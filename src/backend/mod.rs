@@ -130,6 +130,8 @@ pub trait Backend: Send + Sync {
     ) -> Result<Option<TaskError>, BackendError> {
         Ok(self.get_task_meta(task_id).await?.traceback)
     }
+    /// Watches the backend and blocks until the state of the task changes to a status (commonly Success)
+    async fn wait_for_task_state(&self, task_id: &str, state: TaskState) -> Result<(), BackendError>;
 }
 
 /// Metadata of the task stored in the storage used.

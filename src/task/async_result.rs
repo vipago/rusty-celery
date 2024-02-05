@@ -94,4 +94,11 @@ impl AsyncResult {
             None => Err(BackendError::NotSet),
         }
     }
+    
+    /// Watches the backend and blocks until the state of the task changes to a status (commonly Success)
+    pub async fn wait_for_state(&self, status: TaskState) -> Result<(), BackendError> {
+        self.throw_if_backend_not_set()?;
+        let backend = self.backend.clone().unwrap();
+        backend.wait_for_task_state(self.task_id.as_str(), status).await
+    }
 }
