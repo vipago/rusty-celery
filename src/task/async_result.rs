@@ -95,10 +95,10 @@ impl AsyncResult {
         }
     }
     
-    /// Watches the backend and blocks until the state of the task changes to a status (commonly Success)
-    pub async fn wait_for_state(&self, status: TaskState) -> Result<(), BackendError> {
+    /// Watches the backend and blocks until the state of the task changes to a `Success` or `Failure`
+    pub async fn wait_for_completion(&self) -> Result<bool, BackendError> {
         self.throw_if_backend_not_set()?;
         let backend = self.backend.clone().unwrap();
-        backend.wait_for_task_state(self.task_id.as_str(), status).await
+        backend.wait_for_completion(self.task_id.as_str()).await
     }
 }
