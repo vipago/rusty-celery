@@ -1,7 +1,7 @@
 //! Provides the [`Task`] trait as well as options for configuring tasks.
 
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use rand::distributions::{Distribution, Uniform};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -111,10 +111,7 @@ pub trait Task: Send + Sync + std::marker::Sized {
                 let now_secs = now.as_secs() as u32;
                 let now_millis = now.subsec_millis();
                 let eta_secs = now_secs + countdown;
-                Some(DateTime::<Utc>::from_utc(
-                    NaiveDateTime::from_timestamp(eta_secs as i64, now_millis * 1000),
-                    Utc,
-                ))
+                DateTime::from_timestamp(eta_secs as i64, now_millis * 1000)
             }
             Err(_) => None,
         };
@@ -139,19 +136,16 @@ pub trait Task: Send + Sync + std::marker::Sized {
         let between = Uniform::from(0..1000);
         let mut rng = rand::thread_rng();
         let delay_millis = between.sample(&mut rng);
-        match SystemTime::now().duration_since(UNIX_EPOCH) {
-            Ok(now) => {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|now| {
                 let now_secs = now.as_secs() as u32;
                 let now_millis = now.subsec_millis();
                 let eta_secs = now_secs + delay_secs;
                 let eta_millis = now_millis + delay_millis;
-                Some(DateTime::<Utc>::from_utc(
-                    NaiveDateTime::from_timestamp(eta_secs as i64, eta_millis * 1000),
-                    Utc,
-                ))
-            }
-            Err(_) => None,
-        }
+                DateTime::from_timestamp(eta_secs as i64, eta_millis * 1000)
+            })
     }
 
     fn retry_for_unexpected(&self) -> bool {

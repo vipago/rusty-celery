@@ -1,6 +1,9 @@
 use serde::de::DeserializeOwned;
 
-use crate::{backend::Backend, prelude::{BackendError, TaskError}};
+use crate::{
+    backend::Backend,
+    prelude::{BackendError, TaskError},
+};
 
 use std::sync::Arc;
 
@@ -16,7 +19,7 @@ impl AsyncResult {
     pub(crate) fn new(task_id: &str, backend: Option<Arc<dyn Backend>>) -> Self {
         Self {
             task_id: task_id.into(),
-            backend
+            backend,
         }
     }
 
@@ -43,14 +46,19 @@ impl AsyncResult {
     }
 
     /// Get result of task
-    pub async fn result<T: Send + Sync + Unpin + DeserializeOwned>(&self) -> Result<Option<T>, BackendError> {
+    pub async fn result<T: Send + Sync + Unpin + DeserializeOwned>(
+        &self,
+    ) -> Result<Option<T>, BackendError> {
         self.throw_if_backend_not_set()?;
         let backend = self.backend.clone().unwrap();
-        let result = backend.get_result(&self.task_id).await?;
-        if result.is_none() {
-            return Ok(None);
-        }
-        Ok(serde_json::from_str(&result.unwrap())?)
+        backend.get_result(&self.task_id).await.and_then(|result| {
+            result
+                .as_ref()
+                .map(String::as_str)
+                .map(serde_json::from_str)
+                .transpose()
+                .map_err(BackendError::from)
+        })
     }
 
     /// Get traceback of task
@@ -83,7 +91,7 @@ impl AsyncResult {
     fn throw_if_backend_not_set(&self) -> Result<(), BackendError> {
         match &self.backend {
             Some(_) => Ok(()),
-            None => Err(BackendError::NotSet)
+            None => Err(BackendError::NotSet),
         }
     }
 }

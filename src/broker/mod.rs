@@ -120,15 +120,6 @@ pub trait BrokerBuilder: Send + Sync {
     async fn build(&self, connection_timeout: u32) -> Result<Box<dyn Broker>, BrokerError>;
 }
 
-pub(crate) fn broker_builder_from_url(broker_url: &str) -> Box<dyn BrokerBuilder> {
-    match broker_url.split_once("://") {
-        Some(("amqp", _)) => Box::new(AMQPBrokerBuilder::new(broker_url)),
-        Some(("redis", _)) => Box::new(RedisBrokerBuilder::new(broker_url)),
-        #[cfg(test)]
-        Some(("mock", _)) => Box::new(mock::MockBrokerBuilder::new(broker_url)),
-        _ => panic!("Unsupported broker"),
-    }
-}
 
 // TODO: this function consumes the broker_builder, which results in a not so ergonomic API.
 // Can it be improved?

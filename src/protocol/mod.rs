@@ -9,7 +9,8 @@ use base64::{
     engine::{general_purpose::PAD, GeneralPurpose},
     Engine,
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
+use std::time::Duration;
 use log::{debug, warn};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -183,7 +184,7 @@ where
 
     pub fn countdown(self, countdown: u32) -> Self {
         let now = DateTime::<Utc>::from(SystemTime::now());
-        let eta = now + Duration::seconds(countdown as i64);
+        let eta = now + Duration::from_secs(countdown as u64);
         self.eta(eta)
     }
 
@@ -194,7 +195,7 @@ where
 
     pub fn expires_in(self, expires_in: u32) -> Self {
         let now = DateTime::<Utc>::from(SystemTime::now());
-        let expires = now + Duration::seconds(expires_in as i64);
+        let expires = now + Duration::from_secs(expires_in as u64);
         self.expires(expires)
     }
 

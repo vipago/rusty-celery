@@ -3,9 +3,9 @@ use crate::broker::mock::MockBroker;
 use crate::protocol::MessageContentType;
 use crate::task::{Request, Signature, Task, TaskOptions, TaskResult};
 use async_trait::async_trait;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 async fn build_basic_app() -> Celery {
     let celery = CeleryBuilder::new("mock-app", "mock://localhost:8000", None)
@@ -191,7 +191,7 @@ async fn test_send_task_with_expires_in() {
 #[tokio::test]
 async fn test_send_task_with_expires() {
     let app = build_basic_app().await;
-    let dt = DateTime::<Utc>::from(SystemTime::now()) + Duration::seconds(10);
+    let dt = DateTime::<Utc>::from(SystemTime::now()) + Duration::from_secs(10);
     let result = app
         .send_task(AddTask::new(1, 2).with_expires(dt))
         .await

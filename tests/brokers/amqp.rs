@@ -1,6 +1,5 @@
 #![allow(non_upper_case_globals)]
 
-use celery::broker::{AMQPBroker, Broker};
 use celery::error::TaskError;
 use celery::task::{Request, Signature, Task, TaskOptions};
 
