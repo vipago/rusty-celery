@@ -61,18 +61,33 @@ impl Backend for RedisBackend {
         let meta: ResultMetadata = serde_json::from_str(&meta)?;
         Ok(meta)
     }
-
-    async fn wait_for_task_state(&self, task_id: &str, state: TaskState) -> Result<(), BackendError> {
+    async fn wait_for_completion(&self, task_id: &str) -> Result<bool, BackendError> {
         let mut connection = self.0.get_async_connection().await?;
         let key = format!("task:{task_id}");
         loop {
             let result: String = connection.get(&key).await?;
             let result: ResultMetadata = serde_json::from_str(result.as_str())?;
-            if result.status == state {
-                 break;
+            match result.status {
+                TaskState::Pending => {
+                    log::trace!("waiting for task: task {task_id} is still pending");
+                },
+                TaskState::Started => {
+                    log::trace!("waiting for task: task {task_id} is running");
+                },
+                TaskState::Retry => {
+                    log::trace!("waiting for task: task {task_id} is going to be retried");
+                },
+                TaskState::Failure => {
+                    log::trace!("waiting for task: task {task_id} returned an error");
+                    break Ok(false);
+                },
+                TaskState::Success => {
+                    log::trace!("waiting for task: task {task_id} finished successfully");
+                    break Ok(true);
+                },
             }
+
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
-        Ok(())
     }
 }

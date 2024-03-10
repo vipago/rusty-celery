@@ -1,5 +1,3 @@
-use crate::task::TaskState;
-
 use super::{Backend, BackendBuilder, BackendError, ResultMetadata};
 
 use async_trait::async_trait;
@@ -35,7 +33,7 @@ impl Backend for MockBackend {
         unimplemented!()
     }
     
-    async fn wait_for_task_state(&self, _task_id: &str, _state: TaskState) -> Result<(), BackendError> {
+    async fn wait_for_completion(&self, _task_id: &str) -> Result<bool, BackendError> {
         unimplemented!()
     }
 }

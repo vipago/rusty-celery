@@ -13,10 +13,7 @@ use serde::{Deserialize, Serialize};
 #[async_trait]
 pub trait Backend: Send + Sync {
     /// Add task to collection
-    async fn add_task(
-        &self,
-        task_id: &str,
-    ) -> Result<(), BackendError> {
+    async fn add_task(&self, task_id: &str) -> Result<(), BackendError> {
         let metadata = ResultMetadata {
             task_id: task_id.to_string(),
             status: TaskState::Pending,
@@ -28,10 +25,7 @@ pub trait Backend: Send + Sync {
     }
 
     /// Mark task as started to trace
-    async fn mark_as_started(
-        &self,
-        task_id: &str,
-    ) -> Result<(), BackendError> {
+    async fn mark_as_started(&self, task_id: &str) -> Result<(), BackendError> {
         let metadata = ResultMetadata {
             task_id: task_id.to_string(),
             status: TaskState::Started,
@@ -87,10 +81,7 @@ pub trait Backend: Send + Sync {
     }
 
     /// Forget task result
-    async fn forget(
-        &self,
-        task_id: &str,
-    ) -> Result<(), BackendError> {
+    async fn forget(&self, task_id: &str) -> Result<(), BackendError> {
         self.store_result_inner(task_id, None).await
     }
 
@@ -102,36 +93,27 @@ pub trait Backend: Send + Sync {
     ) -> Result<(), BackendError>;
 
     /// Get task meta from backend.
-    async fn get_task_meta(
-        &self,
-        task_id: &str,
-    ) -> Result<ResultMetadata, BackendError>;
+    async fn get_task_meta(&self, task_id: &str) -> Result<ResultMetadata, BackendError>;
 
     /// Get current state of a given task.
-    async fn get_state(
-        &self,
-        task_id: &str,
-    ) -> Result<TaskState, BackendError> {
+    async fn get_state(&self, task_id: &str) -> Result<TaskState, BackendError> {
         Ok(self.get_task_meta(task_id).await?.status)
     }
 
     /// Get result of a given task.
-    async fn get_result(
-        &self,
-        task_id: &str,
-    ) -> Result<Option<String>, BackendError> {
+    async fn get_result(&self, task_id: &str) -> Result<Option<String>, BackendError> {
         Ok(self.get_task_meta(task_id).await?.result)
     }
 
     /// Get result of a given task.
-    async fn get_traceback(
-        &self,
-        task_id: &str,
-    ) -> Result<Option<TaskError>, BackendError> {
+    async fn get_traceback(&self, task_id: &str) -> Result<Option<TaskError>, BackendError> {
         Ok(self.get_task_meta(task_id).await?.traceback)
     }
     /// Watches the backend and blocks until the state of the task changes to a status (commonly Success)
-    async fn wait_for_task_state(&self, task_id: &str, state: TaskState) -> Result<(), BackendError>;
+    async fn wait_for_completion(
+        &self,
+        task_id: &str,
+    ) -> Result<bool, BackendError>;
 }
 
 /// Metadata of the task stored in the storage used.
@@ -153,7 +135,9 @@ pub struct ResultMetadata {
 #[async_trait]
 pub trait BackendBuilder {
     /// Create a new `BackendBuilder`.
-    fn new(broker_url: &str) -> Self where Self: Sized;
+    fn new(broker_url: &str) -> Self
+    where
+        Self: Sized;
     /// Construct the `Backend` with the given configuration.
     async fn build(self: Box<Self>) -> Result<Box<dyn Backend>, BackendError>;
 }
